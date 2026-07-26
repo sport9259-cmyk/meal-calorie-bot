@@ -7,12 +7,12 @@ from config import OPENROUTER_API_KEY
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# نموذج ثابت بدل الراوتر العشوائي (openrouter/free) — الراوتر كان يختار نموذج
-# مختلف كل مرة وبعضها ضعيف بتحليل الصور، فهذا يعطي نتائج أكثر ثباتا.
-# Qwen2.5-VL-72B من أقوى نماذج الرؤية المجانية المتوفرة حاليا على OpenRouter.
-PRIMARY_MODEL = "qwen/qwen2.5-vl-72b-instruct:free"
-# نموذج احتياطي لو الأساسي فشل أو رجع رد فاضي
-FALLBACK_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"
+# نموذج ثابت محدد (مؤكد توفره مجانا حاليا) بدل الراوتر العشوائي، ليعطي نتائج
+# متسقة بدل ما يتغير النموذج كل مرة. إذا صار خطأ 404 بالمستقبل يعني هذا الاسم
+# صار غير متوفر مجانا (القائمة تتغير عند OpenRouter)، وقتها لازم يتحدث الاسم.
+PRIMARY_MODEL = "google/gemma-4-31b-it:free"
+# نموذج ثابت ثاني كاحتياطي لو الأول رجع رد فاضي أو ضعيف
+FALLBACK_MODEL = "qwen/qwen2.5-vl-3b-instruct:free"
 
 PROMPT = """أنت خبير تغذية دقيق. انظر لصورة الوجبة هذي بعناية وقدر لي:
 
