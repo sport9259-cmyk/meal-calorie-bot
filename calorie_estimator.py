@@ -97,3 +97,56 @@ async def estimate_calories_from_image(image_bytes: bytes, media_type: str = "im
         result["description"] = "تعذر تحليل الوجبة تلقائيا"
 
     return result
+
+
+REFINE_PROMPT_TEMPLATE = """أنت خبير تغذية. عندك تقدير سابق لوجبة:
+- الوصف: {description}
+- السعرات المقدرة: {calories}
+
+المستخدم رد بهذا التوضيح أو التصحيح:
+"{clarification}"
+
+عدّل التقدير بناء على كلام المستخدم (مثلا لو كول الكمية أقل/أكثر، أو أضاف/شال مكون،
+أو صحح نوع الاكل). لو كلامه ما يوضح شي محدد يغير الحساب، خله التقدير قريب من السابق.
+
+رد فقط بصيغة JSON صافية بدون أي نص إضافي وبدون Markdown، بهذا الشكل بالضبط:
+{{"description": "...", "calories": 000}}
+"""
+
+
+async def refine_estimate(description: str, calories: float, clarification: str) -> dict:
+    """
+    يعدل تقدير وجبة سابق بناء على توضيح نصي من المستخدم (محادثة نصية، بدون صورة).
+    يرمي استثناء اذا فشل الطلب بالكامل.
+    """
+    prompt = REFINE_PROMPT_TEMPLATE.format(
+        description=description, calories=int(calories), clarification=clarification
+    )
+
+    payload = {
+        "model": PRIMARY_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "max_tokens": 200,
+    }
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(OPENROUTER_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+    try:
+        raw_text = data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError):
+        raw_text = ""
+
+    result = _parse_response(raw_text)
+    if not result["description"]:
+        # فشل التعديل -> خلي القيم الأصلية بدون تغيير
+        return {"description": description, "calories": calories}
+
+    return result

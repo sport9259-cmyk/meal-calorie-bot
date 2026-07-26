@@ -10,7 +10,7 @@ from telegram.ext import (
 
 import database as db
 from nutrition import calculate_calorie_target
-from calorie_estimator import estimate_calories_from_image
+from calorie_estimator import estimate_calories_from_image, refine_estimate
 from config import TIMEZONE
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,11 @@ TZ = pytz.timezone(TIMEZONE)
 
 # حالات محادثة التسجيل (onboarding)
 GENDER, WEIGHT, HEIGHT, AGE, ACTIVITY = range(5)
+
+# يتتبع آخر وجبة محللة لكل مستخدم، علمود لو رد برسالة نصية (توضيح/تصحيح)
+# نعرف نربطها بالوجبة الصحيحة ونعدلها بدل ما نطلب رقم يدوي بس.
+# شكل كل عنصر: {"meal_id": int, "description": str, "calories": float}
+PENDING_MEAL_CONTEXT: dict[int, dict] = {}
 
 
 def today_str():
@@ -184,10 +189,18 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        db.add_meal(chat_id, today_str(), description, calories)
+        meal_id = db.add_meal(chat_id, today_str(), description, calories)
 
         meals_today = db.get_meals_for_day(chat_id, today_str())
         total_today = sum(m["calories"] for m in meals_today)
+
+        # نخزن سياق آخر وجبة علمود لو المستخدم رد برسالة نصية نفهم انه يريد
+        # يصحح أو يوضح تفاصيل عن هذي الوجبة بالذات
+        PENDING_MEAL_CONTEXT[chat_id] = {
+            "meal_id": meal_id,
+            "description": description,
+            "calories": calories,
+        }
 
         await processing_msg.edit_text(
             f"✅ تسجلت الوجبة!\n\n"
@@ -195,7 +208,8 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔥 السعرات: {int(calories)} سعرة\n\n"
             f"📊 مجموع اليوم لحد الآن: {int(total_today)} سعرة "
             f"من أصل {int(user['calorie_target'])} ({len(meals_today)} وجبة)\n\n"
-            f"💡 لو الرقم غلط، صححه بـ: /fix الرقم_الصحيح"
+            f"💬 لو الرقم غلط أو ناقصه تفاصيل، بس اكتبلي (مثلا: \"الكمية نص هذا\" "
+            f"أو \"ماكو زيت زايد\") وأعدل التقدير."
         )
     except Exception as e:
         logger.exception("فشل تحليل صورة الوجبة")
@@ -275,6 +289,55 @@ async def fix_calories_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def clarification_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    يستقبل رسائل نصية عادية (مو أوامر) بعد ما البوت يحلل صورة وجبة، ويعتبرها
+    توضيح أو تصحيح لتلك الوجبة، ويعدل السعرات باستخدام الذكاء الاصطناعي.
+    """
+    chat_id = update.effective_chat.id
+    pending = PENDING_MEAL_CONTEXT.get(chat_id)
+
+    if not pending:
+        # ماكو وجبة حديثة ينتظر توضيح عليها -> نتجاهل الرسالة (مو من شغل هذا الهاندلر)
+        return
+
+    clarification_text = update.message.text.strip()
+    if not clarification_text:
+        return
+
+    thinking_msg = await update.message.reply_text("جاري تعديل التقدير... 🔄")
+
+    try:
+        result = await refine_estimate(
+            pending["description"], pending["calories"], clarification_text
+        )
+        new_description = result["description"]
+        new_calories = result["calories"]
+
+        db.update_meal_calories(pending["meal_id"], new_calories)
+
+        # حدث السياق المحفوظ علمود لو رد بتوضيح ثاني نبني على التعديل الأخير
+        PENDING_MEAL_CONTEXT[chat_id] = {
+            "meal_id": pending["meal_id"],
+            "description": new_description,
+            "calories": new_calories,
+        }
+
+        meals_today = db.get_meals_for_day(chat_id, today_str())
+        total_today = sum(m["calories"] for m in meals_today)
+
+        await thinking_msg.edit_text(
+            f"✅ تم التعديل!\n\n"
+            f"🍽️ الوصف: {new_description}\n"
+            f"🔥 السعرات الجديدة: {int(new_calories)} سعرة\n\n"
+            f"📊 مجموع اليوم بعد التعديل: {int(total_today)} سعرة\n\n"
+            f"💬 تكدر توضح أكثر لو تحب أعدلها مرة ثانية."
+        )
+    except Exception:
+        logger.exception("فشل تعديل تقدير الوجبة عبر المحادثة")
+        await thinking_msg.edit_text("صار خطأ بالتعديل 😅 جرب أمر /fix بدل هذا (مثلا: /fix 550).")
+
+
 def register_handlers(app):
     from telegram.ext import ConversationHandler
 
@@ -294,3 +357,5 @@ def register_handlers(app):
     app.add_handler(CommandHandler("today", today_summary_cmd))
     app.add_handler(CommandHandler("fix", fix_calories_cmd))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    # يجب يكون آخر هاندلر نصي، علمود ما يتعارض مع محادثة التسجيل (onboarding)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, clarification_handler))
