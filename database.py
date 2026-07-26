@@ -74,10 +74,11 @@ def get_all_onboarded_users():
 
 def add_meal(chat_id, meal_date, description, calories):
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO meals (chat_id, meal_date, description, calories, created_at)
             VALUES (?, ?, ?, ?, ?)
         """, (chat_id, meal_date, description, calories, datetime.now().isoformat()))
+        return cur.lastrowid
 
 
 def get_meals_for_day(chat_id, meal_date):
@@ -86,3 +87,18 @@ def get_meals_for_day(chat_id, meal_date):
             SELECT * FROM meals WHERE chat_id = ? AND meal_date = ? ORDER BY created_at
         """, (chat_id, meal_date)).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_last_meal(chat_id):
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT * FROM meals WHERE chat_id = ? ORDER BY id DESC LIMIT 1
+        """, (chat_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_meal_calories(meal_id, new_calories):
+    with get_conn() as conn:
+        conn.execute("""
+            UPDATE meals SET calories = ? WHERE id = ?
+        """, (new_calories, meal_id))

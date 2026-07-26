@@ -194,7 +194,8 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🍽️ الوصف: {description}\n"
             f"🔥 السعرات: {int(calories)} سعرة\n\n"
             f"📊 مجموع اليوم لحد الآن: {int(total_today)} سعرة "
-            f"من أصل {int(user['calorie_target'])} ({len(meals_today)} وجبة)"
+            f"من أصل {int(user['calorie_target'])} ({len(meals_today)} وجبة)\n\n"
+            f"💡 لو الرقم غلط، صححه بـ: /fix الرقم_الصحيح"
         )
     except Exception as e:
         logger.exception("فشل تحليل صورة الوجبة")
@@ -234,6 +235,46 @@ async def today_summary_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def fix_calories_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user = db.get_user(chat_id)
+    if not user or not user["onboarded"]:
+        await update.message.reply_text("سجل بياناتك أول بـ /start")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "استخدم الأمر بهذا الشكل: /fix 550\n"
+            "(يعدل سعرات آخر وجبة سجلتها للرقم اللي تكتبه)"
+        )
+        return
+
+    try:
+        new_calories = float(context.args[0].replace(",", "."))
+        if new_calories < 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("اكتب رقم صحيح بس، مثلا: /fix 550")
+        return
+
+    last_meal = db.get_last_meal(chat_id)
+    if not last_meal:
+        await update.message.reply_text("ماكو وجبة مسجلة لحد الآن تكدر تصححها.")
+        return
+
+    db.update_meal_calories(last_meal["id"], new_calories)
+
+    meals_today = db.get_meals_for_day(chat_id, today_str())
+    total_today = sum(m["calories"] for m in meals_today)
+
+    await update.message.reply_text(
+        f"✅ تم التعديل!\n\n"
+        f"🍽️ الوجبة: {last_meal['description']}\n"
+        f"🔥 السعرات الجديدة: {int(new_calories)} سعرة\n\n"
+        f"📊 مجموع اليوم بعد التعديل: {int(total_today)} سعرة"
+    )
+
+
 def register_handlers(app):
     from telegram.ext import ConversationHandler
 
@@ -251,4 +292,5 @@ def register_handlers(app):
 
     app.add_handler(onboarding_conv)
     app.add_handler(CommandHandler("today", today_summary_cmd))
+    app.add_handler(CommandHandler("fix", fix_calories_cmd))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
