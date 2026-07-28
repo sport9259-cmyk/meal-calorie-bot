@@ -5,9 +5,10 @@ import httpx
 
 from config import GEMINI_API_KEY
 
-# نموذج Gemini الحالي (سريع ورخيص/مجاني ضمن حد استخدام يومي سخي).
-# لو صار خطأ 404 مستقبلا يعني هذا الاسم اتغير عند Google، حينها لازم يتحدث.
-MODEL = "gemini-2.5-flash"
+# نموذج Gemini الحالي الموصى فيه رسميا من كوكل (سريع ورخيص/مجاني ضمن حد
+# استخدام يومي سخي). لو صار خطأ 404 مستقبلا يعني هذا الاسم اتغير عند Google،
+# حينها لازم يتحدث حسب آخر توصية بصفحة ai.google.dev/gemini-api/docs/models
+MODEL = "gemini-2.5-flash-lite"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 )
