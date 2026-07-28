@@ -59,10 +59,12 @@ async def _call_gemini(parts: list) -> str:
         "contents": [{"parts": parts}],
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 300},
     }
-    params = {"key": GEMINI_API_KEY}
+    # المفتاح يرسل براس الطلب (header) بدل نهاية الرابط — هذا الشكل المعتمد
+    # رسميا من كوكل، خصوصا مع مفاتيح النوع الجديد (تبدي بـ AQ.)
+    headers = {"x-goog-api-key": GEMINI_API_KEY, "Content-Type": "application/json"}
 
     async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(GEMINI_URL, params=params, json=payload)
+        resp = await client.post(GEMINI_URL, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
