@@ -27,6 +27,20 @@ PROMPT = """أنت خبير تغذية دقيق. انظر لصورة الوجب�
 اذا الصورة مو وجبة اكل واضحة، حط "calories": 0 و"description": "لم أستطع تحديد الوجبة بوضوح".
 """
 
+TEXT_ESTIMATE_PROMPT_TEMPLATE = """أنت خبير تغذية دقيق. المستخدم وصف وجبته بالنص التالي:
+"{meal_text}"
+
+1. افهم مكونات الوجبة من الوصف (نوع الاكل، الكمية إذا مذكورة، طريقة الطبخ إذا مذكورة)
+2. لو الوصف ما يذكر كمية، افترض حصة عادية لشخص بالغ (مثلا صحن متوسط، مو صغير ولا ضخم)
+3. احسب السعرات بدقة معقولة — لا تقلل التقدير للأطعمة المطبوخة بزيت أو سمن أو المحشية
+4. اكتب وصف مختصر بالعربي يلخص الوجبة (سطر وحد)
+
+رد فقط بصيغة JSON صافية بدون أي نص إضافي وبدون Markdown، بهذا الشكل بالضبط:
+{{"description": "...", "calories": 000}}
+
+اذا النص ما يوصف اكل واضح اطلاقا، حط "calories": 0 و"description": "لم أفهم وصف الوجبة بوضوح".
+"""
+
 REFINE_PROMPT_TEMPLATE = """أنت خبير تغذية. عندك تقدير سابق لوجبة:
 - الوصف: {description}
 - السعرات المقدرة: {calories}
@@ -104,6 +118,35 @@ async def estimate_calories_from_image(image_bytes: bytes, media_type: str = "im
 
     if not result["description"]:
         result["description"] = "تعذر تحليل الوجبة تلقائيا"
+
+    return result
+
+
+async def estimate_calories_from_text(meal_text: str) -> dict:
+    """
+    يقدر سعرات وجبة من وصف نصي (بدون صورة) — أخف وأوثق من تحليل الصور لأنه
+    يعتمد على نماذج نصية بسيطة، ما يحتاج نموذج "رؤية" مخصص.
+    يرمي استثناء اذا فشل الطلب بالكامل.
+    """
+    prompt = TEXT_ESTIMATE_PROMPT_TEMPLATE.format(meal_text=meal_text)
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        raw_text = await _call_model(client, PRIMARY_MODEL, prompt, headers)
+        result = _parse_response(raw_text)
+
+        if result["calories"] <= 0 or not result["description"]:
+            raw_text = await _call_model(client, FALLBACK_MODEL, prompt, headers)
+            fallback_result = _parse_response(raw_text)
+            if fallback_result["calories"] > 0:
+                return fallback_result
+
+    if not result["description"]:
+        result["description"] = "تعذر فهم وصف الوجبة"
 
     return result
 
